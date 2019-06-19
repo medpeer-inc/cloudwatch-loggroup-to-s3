@@ -1,0 +1,84 @@
+service: cloudwatch-loggroup-to-s3
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: ap-northeast-1
+  logRetentionInDays: 7
+  versionFunctions: false
+  stage: ${opt:stage}
+  profile: ${env:AWS_PROFILE}
+  iamRoleStatements:
+   - Effect: "Allow"
+     Action:
+       - "logs:CreateExportTask"
+       - "s3:GetBucketAcl"
+     Resource: "*"
+
+custom:
+  environment:
+    sugi:
+      app:
+        S3_BUCKET_NAME: stg.hoge.logs
+        LOG_GROUP: stg-sugi/ecs/app
+      admin:
+        S3_BUCKET_NAME: prd.hoge.logs
+        LOG_GROUP: xxxx-prd-hoge/ecs/admin
+    moge:
+      app:
+        S3_BUCKET_NAME: prd.moge.logs
+        LOG_GROUP:  yyyy-moge/ecs/app
+      api:
+        S3_BUCKET_NAME: prd.moge.logs
+        LOG_GROUP:  yyyy-moge/ecs/api
+
+functions:
+  lambda_handler:
+    handler: handler.trigger
+    environment: ${self:custom.environment.${env:AWS_PROFILE}.${self:provider.stage}}
+    description: Daily saving CloudWatch LogGroup to S3
+    events:
+      - schedule: cron(30 0 * * ? *)
+
+resources:
+  Resources:
+    LogsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: Private
+        BucketName: ${self:custom.environment.${env:AWS_PROFILE}.${self:provider.stage}.S3_BUCKET_NAME}
+    LogsBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      DependsOn: LogsBucket
+      Properties:
+        Bucket:
+          Ref: LogsBucket
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Sid: 1
+            Effect: Allow
+            Principal:
+              Service: "logs.${self:provider.region}.amazonaws.com"
+            Action:
+              - s3:GetBucketAcl
+            Resource:
+              Fn::Join:
+                - ''
+                -
+                  - Fn::GetAtt: [ LogsBucket, Arn ]
+          - Sid: 2
+            Effect: Allow
+            Principal:
+              Service: "logs.${self:provider.region}.amazonaws.com"
+            Action:
+              - s3:PutObject
+            Resource:
+              Fn::Join:
+                - ''
+                -
+                  - Fn::GetAtt: [ LogsBucket, Arn ]
+                  - '/*'
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: "bucket-owner-full-control"
